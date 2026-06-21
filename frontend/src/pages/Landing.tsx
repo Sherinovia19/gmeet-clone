@@ -27,26 +27,76 @@ export default function Landing() {
   }
 
   return (
-    <div className="landing">
-      <h1>Gmeet</h1>
-      <div className="actions">
-        <button onClick={handleNewMeeting}>New Meeting</button>
-        <div className="join">
-          <input
-            placeholder="Enter meeting code"
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
-          />
-          <button onClick={handleJoin} disabled={!joinCode.trim()}>Join</button>
+    <div className="meet-home">
+      <header className="topbar">
+        <div className="logo">
+          <span className="logo-icon">📹</span>
+          <span className="logo-text">Gmeet</span>
         </div>
-      </div>
-      {recentRooms.length > 0 && (
-        <div className="recent">
-          <h3>Recent rooms</h3>
-          <ul>{recentRooms.map((r) => <li key={r}>{r}</li>)}</ul>
+        <div className="top-actions">
+          <button className="icon-btn" title="Help">❓</button>
+          <button className="icon-btn" title="Settings">⚙️</button>
+          <div className="avatar">U</div>
         </div>
-      )}
+      </header>
+
+      <main className="home-content">
+        <div className="left">
+          <h1>Video calls and meetings for everyone</h1>
+          <p>Connect, collaborate and celebrate from anywhere with Gmeet.</p>
+
+          <div className="action-row">
+            <button className="primary" onClick={handleNewMeeting}>
+              <span className="btn-icon">＋</span> New meeting
+            </button>
+
+            <div className="join-box">
+              <input
+                placeholder="Enter a code or link"
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
+              />
+              <button
+                className="join-btn"
+                onClick={handleJoin}
+                disabled={!joinCode.trim()}
+              >
+                Join
+              </button>
+            </div>
+          </div>
+
+          {recentRooms.length > 0 && (
+            <div className="recent-rooms">
+              <h3>Recent meetings</h3>
+              <ul>
+                {recentRooms.map((r) => (
+                  <li key={r}>
+                    <button
+                      className="recent-room-btn"
+                      onClick={() => navigate(`/prejoin?room=${r}`)}
+                    >
+                      {r}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <hr className="divider" />
+          <p className="hint-text">
+            Learn more about <a href="#">Gmeet</a>
+          </p>
+        </div>
+
+        <div className="right">
+          <div className="mock-card">
+            <span className="mock-icon">🎥</span>
+          </div>
+        </div>
+      </main>
     </div>
   );
 }
