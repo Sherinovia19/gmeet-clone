@@ -27,12 +27,55 @@ export default function PreJoin() {
   }
 
   return (
-    <div className="prejoin">
-      <video ref={videoRef} autoPlay muted playsInline />
-      <input placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} />
-      <button onClick={() => setMicEnabled(!micEnabled)}>{micEnabled ? 'Mute' : 'Unmute'}</button>
-      <button onClick={() => setCamEnabled(!camEnabled)}>{camEnabled ? 'Cam Off' : 'Cam On'}</button>
-      <button onClick={handleJoin}>Join Now</button>
+    <div className="prejoin-page">
+      {/* LEFT - VIDEO */}
+      <div className="video-section">
+        <div className="video-preview">
+          {camEnabled ? (
+            <video ref={videoRef} autoPlay muted playsInline />
+          ) : (
+            <div className="cam-off-avatar">
+              {name ? name.charAt(0).toUpperCase() : 'U'}
+            </div>
+          )}
+
+          <div className="device-row floating">
+            <button
+              className={`device-btn ${!micEnabled ? 'off' : ''}`}
+              onClick={() => setMicEnabled(!micEnabled)}
+              title={micEnabled ? 'Mute' : 'Unmute'}
+            >
+              {micEnabled ? '🎤' : '🔇'}
+            </button>
+            <button
+              className={`device-btn ${!camEnabled ? 'off' : ''}`}
+              onClick={() => setCamEnabled(!camEnabled)}
+              title={camEnabled ? 'Turn off camera' : 'Turn on camera'}
+            >
+              {camEnabled ? '📷' : '🚫'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* RIGHT - JOIN PANEL */}
+      <div className="join-panel">
+        <h2>Ready to join?</h2>
+
+        <input
+          placeholder="Your name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+
+        <button className="join-now-btn" onClick={handleJoin}>
+          Join now
+        </button>
+
+        <p className="small">
+          {room ? `Joining room: ${room}` : 'No room code provided'}
+        </p>
+      </div>
     </div>
   );
 }
