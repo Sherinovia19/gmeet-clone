@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { LiveKitRoom } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { createLocalTracks } from 'livekit-client';
