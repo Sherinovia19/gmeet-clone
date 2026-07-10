@@ -2,6 +2,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 
 interface LocationState {
   duration?: string;
+  peakParticipants?: number;
 }
 
 export default function MeetingSummary() {
@@ -10,12 +11,13 @@ export default function MeetingSummary() {
   const location = useLocation();
   const state = location.state as LocationState | null;
   const duration = state?.duration ?? '00:00';
-
+  const peakParticipants = state?.peakParticipants ?? 1;
   const meetingLink = `${window.location.origin}/prejoin?room=${code}`;
 
   async function handleCopyLink() {
     try {
       await navigator.clipboard.writeText(meetingLink);
+      alert('Meeting link copied!');
     } catch {
       /* clipboard not available */
     }
@@ -24,14 +26,11 @@ export default function MeetingSummary() {
   return (
     <div className="summary-page min-h-screen bg-[#0f0f0f] flex items-center justify-center p-4">
       <div className="summary-card w-full max-w-md bg-[#1a1a1a] rounded-2xl shadow-2xl p-8 text-center">
-        {/* Icon */}
         <div className="text-5xl mb-4">📹</div>
-
-        {/* Heading */}
         <h1 className="text-2xl font-semibold text-white mb-2">Meeting ended</h1>
+        <p className="text-gray-400 text-sm mb-6">Thanks for using Gmeet</p>
 
-        {/* Stats */}
-        <div className="summary-stats space-y-2 mb-6">
+        <div className="summary-stats space-y-2 mb-6 bg-[#252525] rounded-xl p-4">
           <p className="text-gray-400 text-sm">
             Room: <span className="text-white font-mono">{code}</span>
           </p>
@@ -39,11 +38,10 @@ export default function MeetingSummary() {
             Duration: <span className="text-white font-mono">{duration}</span>
           </p>
           <p className="text-gray-400 text-sm">
-            Participants: <span className="text-white">—</span>
+            Participants: <span className="text-white">{peakParticipants}</span>
           </p>
         </div>
 
-        {/* Actions */}
         <div className="summary-actions flex flex-col gap-3">
           <button
             onClick={() => navigate('/')}
