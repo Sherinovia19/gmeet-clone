@@ -6,21 +6,22 @@ import {
   Mic, MicOff, Camera, CameraOff, ScreenShare,
   MessageSquare, Hand, PhoneOff, Lock, Unlock, Crown,
 } from 'lucide-react';
-import { RoomEvent, DataPacket_Kind } from 'livekit-client';
+import { RoomEvent } from 'livekit-client';
+import { ConnectionQuality } from 'livekit-client';
 import MeetingTimer from '../components/MeetingTimer';
 import ChatPanel from '../components/ChatPanel';
 import ConfirmDialog from '../components/ConfirmDialog';
 
 const HANDRAISE_TOPIC = 'handraise';
 
-interface HandRaiseState {
+interface HandRaisePayload {
+  identity: string;
+  name: string;
   raised: boolean;
   raisedAt: number;
 }
 
-interface HandRaisePayload {
-  identity: string;
-  name: string;
+interface HandRaiseState {
   raised: boolean;
   raisedAt: number;
 }
@@ -30,9 +31,20 @@ interface Notification {
   message: string;
 }
 
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) {
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
 function MeetingRoomInner({ code, identity }: { code: string; identity: string }) {
   const navigate = useNavigate();
   const room = useRoomContext();
+
   const [chatDrawerOpen, setChatDrawerOpen] = useState(false);
   const [participantDrawerOpen, setParticipantDrawerOpen] = useState(false);
   const [micOn, setMicOn] = useState(true);
@@ -45,11 +57,26 @@ function MeetingRoomInner({ code, identity }: { code: string; identity: string }
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const [handRaises, setHandRaises] = useState<Record<string, HandRaiseState>>({});
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [elapsed, setElapsed] = useState(0);
+  const [peakParticipants, setPeakParticipants] = useState(1);
 
   const { chatMessages } = useChat();
   const participants = useParticipants();
   const isHost = hostIdentity === identity;
   const myHandRaised = handRaises[identity]?.raised ?? false;
+
+  // Track elapsed time
+  useEffect(() => {
+    const id = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Track peak participants
+  useEffect(() => {
+    if (participants.length > peakParticipants) {
+      setPeakParticipants(participants.length);
+    }
+  }, [participants]);
 
   // Fetch host on mount
   useEffect(() => {
@@ -65,7 +92,7 @@ function MeetingRoomInner({ code, identity }: { code: string; identity: string }
     if (chatDrawerOpen) setUnreadCount(0);
   }, [chatMessages, chatDrawerOpen]);
 
-  // Add notification with auto-dismiss after 10s
+  // Notification helper
   const addNotification = useCallback((message: string) => {
     const id = `${Date.now()}-${Math.random()}`;
     setNotifications((prev) => [...prev, { id, message }]);
@@ -83,42 +110,25 @@ function MeetingRoomInner({ code, identity }: { code: string; identity: string }
       raised,
       raisedAt: Date.now(),
     };
-    const encoder = new TextEncoder();
-    const data = encoder.encode(JSON.stringify(payload));
-    await room.localParticipant.publishData(data, {
-      reliable: true,
-      topic: HANDRAISE_TOPIC,
-    });
-    // Update local state immediately
-    setHandRaises((prev) => ({
-      ...prev,
-      [identity]: { raised, raisedAt: payload.raisedAt },
-    }));
-    if (raised) {
-      addNotification(`You raised your hand`);
-    }
+    const data = new TextEncoder().encode(JSON.stringify(payload));
+    await room.localParticipant.publishData(data, { reliable: true, topic: HANDRAISE_TOPIC });
+    setHandRaises((prev) => ({ ...prev, [identity]: { raised, raisedAt: payload.raisedAt } }));
+    if (raised) addNotification('You raised your hand');
   }, [room, identity, addNotification]);
 
   // Listen for hand raise data messages
   useEffect(() => {
     if (!room) return;
-
-    const handleData = (data: Uint8Array, _participant: unknown, _kind: unknown, topic?: string) => {
+    const handleData = (data: Uint8Array, _p: unknown, _k: unknown, topic?: string) => {
       if (topic !== HANDRAISE_TOPIC) return;
       try {
         const payload: HandRaisePayload = JSON.parse(new TextDecoder().decode(data));
-        setHandRaises((prev) => ({
-          ...prev,
-          [payload.identity]: { raised: payload.raised, raisedAt: payload.raisedAt },
-        }));
+        setHandRaises((prev) => ({ ...prev, [payload.identity]: { raised: payload.raised, raisedAt: payload.raisedAt } }));
         if (payload.raised && payload.identity !== identity) {
           addNotification(`${payload.name} raised their hand`);
         }
-      } catch {
-        // ignore malformed
-      }
+      } catch { /* ignore */ }
     };
-
     room.on(RoomEvent.DataReceived, handleData);
     return () => { room.off(RoomEvent.DataReceived, handleData); };
   }, [room, identity, addNotification]);
@@ -133,26 +143,21 @@ function MeetingRoomInner({ code, identity }: { code: string; identity: string }
       raised: false,
       raisedAt: Date.now(),
     };
-    const encoder = new TextEncoder();
-    const data = encoder.encode(JSON.stringify(payload));
-    await room.localParticipant.publishData(data, {
-      reliable: true,
-      topic: HANDRAISE_TOPIC,
-    });
-    setHandRaises((prev) => ({
-      ...prev,
-      [targetIdentity]: { raised: false, raisedAt: Date.now() },
-    }));
+    const data = new TextEncoder().encode(JSON.stringify(payload));
+    await room.localParticipant.publishData(data, { reliable: true, topic: HANDRAISE_TOPIC });
+    setHandRaises((prev) => ({ ...prev, [targetIdentity]: { raised: false, raisedAt: Date.now() } }));
   };
+
+  const summaryState = { duration: formatDuration(elapsed), peakParticipants };
 
   const handleLeave = () => {
     if (isHost) setLeaveDialog(true);
-    else navigate(`/meeting/${code}/summary`);
+    else navigate(`/meeting/${code}/summary`, { state: summaryState });
   };
 
   const handleEndForAll = async () => {
     await fetch(`/api/rooms/${code}/end`, { method: 'POST' });
-    navigate(`/meeting/${code}/summary`);
+    navigate(`/meeting/${code}/summary`, { state: summaryState });
   };
 
   const handleHostLeaveOnly = async () => {
@@ -164,13 +169,11 @@ function MeetingRoomInner({ code, identity }: { code: string; identity: string }
         body: JSON.stringify({ newHostIdentity: next.identity }),
       });
     }
-    navigate(`/meeting/${code}/summary`);
+    navigate(`/meeting/${code}/summary`, { state: summaryState });
   };
 
   const handleRemoveParticipant = async (targetIdentity: string) => {
-    await fetch(`/api/rooms/${code}/participants/${encodeURIComponent(targetIdentity)}`, {
-      method: 'DELETE',
-    });
+    await fetch(`/api/rooms/${code}/participants/${encodeURIComponent(targetIdentity)}`, { method: 'DELETE' });
     setRemoveTarget(null);
   };
 
@@ -182,12 +185,9 @@ function MeetingRoomInner({ code, identity }: { code: string; identity: string }
 
   return (
     <div className="meeting-room">
-      {/* ── Notifications ── */}
+      {/* Notifications */}
       {notifications.length > 0 && (
-        <div style={{
-          position: 'fixed', top: 72, right: 16, zIndex: 500,
-          display: 'flex', flexDirection: 'column', gap: 8,
-        }}>
+        <div style={{ position: 'fixed', top: 72, right: 16, zIndex: 500, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {notifications.map((n) => (
             <div key={n.id} style={{
               background: 'rgba(30,30,30,0.95)', color: '#e0e0e0',
@@ -202,7 +202,7 @@ function MeetingRoomInner({ code, identity }: { code: string; identity: string }
         </div>
       )}
 
-      {/* ── Top bar ── */}
+      {/* Top bar */}
       <div className="top-bar">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span className="room-code">Room: {code}</span>
@@ -222,13 +222,12 @@ function MeetingRoomInner({ code, identity }: { code: string; identity: string }
         </button>
       </div>
 
-      {/* ── Main content area ── */}
+      {/* Main area */}
       <div className="main-area">
         <div className="video-grid">
           <VideoConference />
         </div>
 
-        {/* Chat drawer */}
         {chatDrawerOpen && (
           <div className="side-drawer">
             <div className="side-drawer-header"><h3>Chat</h3></div>
@@ -236,7 +235,6 @@ function MeetingRoomInner({ code, identity }: { code: string; identity: string }
           </div>
         )}
 
-        {/* Participants drawer */}
         {participantDrawerOpen && (
           <div className="side-drawer">
             <div className="side-drawer-header">
@@ -252,34 +250,21 @@ function MeetingRoomInner({ code, identity }: { code: string; identity: string }
                     {p.identity === hostIdentity && <Crown size={14} color="#eab308" />}
                     {handRaises[p.identity]?.raised && <span style={{ fontSize: 14 }}>✋</span>}
                     <span style={{ fontSize: 13, color: '#e0e0e0' }}>
-                      {p.name || p.identity}
-                      {p.identity === identity && ' (you)'}
+                      {p.name || p.identity}{p.identity === identity && ' (you)'}
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     {isHost && handRaises[p.identity]?.raised && p.identity !== identity && (
-                      <button
-                        onClick={() => lowerParticipantHand(p.identity)}
-                        style={{
-                          background: '#3a3a3a', border: 'none', color: '#eab308',
-                          borderRadius: 6, padding: '4px 10px', fontSize: 11,
-                          cursor: 'pointer', fontWeight: 500,
-                        }}
-                      >
-                        Lower Hand
-                      </button>
+                      <button onClick={() => lowerParticipantHand(p.identity)} style={{
+                        background: '#3a3a3a', border: 'none', color: '#eab308',
+                        borderRadius: 6, padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontWeight: 500,
+                      }}>Lower Hand</button>
                     )}
                     {isHost && p.identity !== identity && (
-                      <button
-                        onClick={() => setRemoveTarget(p.identity)}
-                        style={{
-                          background: '#3a3a3a', border: 'none', color: '#ef4444',
-                          borderRadius: 6, padding: '4px 10px', fontSize: 11,
-                          cursor: 'pointer', fontWeight: 500,
-                        }}
-                      >
-                        Remove
-                      </button>
+                      <button onClick={() => setRemoveTarget(p.identity)} style={{
+                        background: '#3a3a3a', border: 'none', color: '#ef4444',
+                        borderRadius: 6, padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontWeight: 500,
+                      }}>Remove</button>
                     )}
                   </div>
                 </div>
@@ -289,74 +274,53 @@ function MeetingRoomInner({ code, identity }: { code: string; identity: string }
         )}
       </div>
 
-      {/* ── Bottom dock ── */}
+      {/* Bottom dock */}
       <div className="bottom-dock">
         <button className={`dock-btn ${!micOn ? 'active-off' : ''}`} onClick={() => setMicOn((v) => !v)}>
           {micOn ? <Mic size={20} /> : <MicOff size={20} />}
           <span>{micOn ? 'Mute' : 'Unmute'}</span>
         </button>
-
         <button className={`dock-btn ${!camOn ? 'active-off' : ''}`} onClick={() => setCamOn((v) => !v)}>
           {camOn ? <Camera size={20} /> : <CameraOff size={20} />}
           <span>{camOn ? 'Stop Camera' : 'Start Camera'}</span>
         </button>
-
         <button className={`dock-btn ${screenSharing ? 'active-on' : ''}`} onClick={() => setScreenSharing((v) => !v)}>
-          <ScreenShare size={20} />
-          <span>Share</span>
+          <ScreenShare size={20} /><span>Share</span>
         </button>
-
-        <button
-          className={`dock-btn ${chatDrawerOpen ? 'active-on' : ''}`}
-          onClick={() => { setChatDrawerOpen((v) => !v); setParticipantDrawerOpen(false); }}
-        >
+        <button className={`dock-btn ${chatDrawerOpen ? 'active-on' : ''}`}
+          onClick={() => { setChatDrawerOpen((v) => !v); setParticipantDrawerOpen(false); }}>
           <div style={{ position: 'relative', display: 'inline-flex' }}>
             <MessageSquare size={20} />
             {!chatDrawerOpen && unreadCount > 0 && (
               <span style={{
-                position: 'absolute', top: -6, right: -6,
-                background: '#ef4444', color: '#fff', borderRadius: '50%',
-                fontSize: 10, fontWeight: 700, minWidth: 16, height: 16,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                padding: '0 3px', lineHeight: 1,
-              }}>
-                {unreadCount > 99 ? '99+' : unreadCount}
-              </span>
+                position: 'absolute', top: -6, right: -6, background: '#ef4444',
+                color: '#fff', borderRadius: '50%', fontSize: 10, fontWeight: 700,
+                minWidth: 16, height: 16, display: 'flex', alignItems: 'center',
+                justifyContent: 'center', padding: '0 3px', lineHeight: 1,
+              }}>{unreadCount > 99 ? '99+' : unreadCount}</span>
             )}
           </div>
           <span>Chat</span>
         </button>
-
-        <button
-          className={`dock-btn ${myHandRaised ? 'active-on' : ''}`}
-          onClick={toggleHandRaise}
-        >
-          <Hand size={20} />
-          <span>{myHandRaised ? 'Lower Hand' : 'Raise Hand'}</span>
+        <button className={`dock-btn ${myHandRaised ? 'active-on' : ''}`} onClick={toggleHandRaise}>
+          <Hand size={20} /><span>{myHandRaised ? 'Lower Hand' : 'Raise Hand'}</span>
         </button>
-
         {isHost && (
           <button className={`dock-btn ${locked ? 'active-on' : ''}`} onClick={handleToggleLock}>
             {locked ? <Unlock size={20} /> : <Lock size={20} />}
             <span>{locked ? 'Unlock' : 'Lock'}</span>
           </button>
         )}
-
-        <button
-          className={`dock-btn ${participantDrawerOpen ? 'active-on' : ''}`}
-          onClick={() => { setParticipantDrawerOpen((v) => !v); setChatDrawerOpen(false); }}
-        >
-          <Crown size={20} />
-          <span>People</span>
+        <button className={`dock-btn ${participantDrawerOpen ? 'active-on' : ''}`}
+          onClick={() => { setParticipantDrawerOpen((v) => !v); setChatDrawerOpen(false); }}>
+          <Crown size={20} /><span>People</span>
         </button>
-
         <button className="dock-btn dock-btn-leave" onClick={handleLeave}>
-          <PhoneOff size={20} />
-          <span>Leave</span>
+          <PhoneOff size={20} /><span>Leave</span>
         </button>
       </div>
 
-      {/* ── Dialogs ── */}
+      {/* Dialogs */}
       {leaveDialog && (
         <ConfirmDialog
           title="Leave meeting"
@@ -368,7 +332,6 @@ function MeetingRoomInner({ code, identity }: { code: string; identity: string }
           onCancel={handleHostLeaveOnly}
         />
       )}
-
       {removeTarget && (
         <ConfirmDialog
           title="Remove participant"
@@ -382,48 +345,19 @@ function MeetingRoomInner({ code, identity }: { code: string; identity: string }
       )}
 
       <style>{`
-        .meeting-room {
-          display: flex; flex-direction: column; height: 100vh;
-          background: #0f0f0f; color: #fff;
-          font-family: 'Google Sans', 'Segoe UI', Arial, sans-serif;
-        }
-        .top-bar {
-          display: flex; align-items: center; justify-content: space-between;
-          padding: 12px 24px; background: #1a1a1a;
-          border-bottom: 1px solid #2a2a2a; flex-shrink: 0; height: 56px;
-        }
+        .meeting-room { display: flex; flex-direction: column; height: 100vh; background: #0f0f0f; color: #fff; font-family: 'Google Sans', 'Segoe UI', Arial, sans-serif; }
+        .top-bar { display: flex; align-items: center; justify-content: space-between; padding: 12px 24px; background: #1a1a1a; border-bottom: 1px solid #2a2a2a; flex-shrink: 0; height: 56px; }
         .room-code { font-size: 14px; color: #aaa; letter-spacing: 0.5px; }
-        .leave-button {
-          display: flex; align-items: center; gap: 8px;
-          background: #d93025; color: #fff; border: none;
-          border-radius: 8px; padding: 8px 20px;
-          font-size: 14px; font-weight: 500; cursor: pointer;
-          transition: background 0.15s;
-        }
+        .leave-button { display: flex; align-items: center; gap: 8px; background: #d93025; color: #fff; border: none; border-radius: 8px; padding: 8px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.15s; }
         .leave-button:hover { background: #c5221f; }
         .main-area { flex: 1; display: flex; overflow: hidden; position: relative; }
         .video-grid { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
         .video-grid > * { width: 100%; height: 100%; }
-        .side-drawer {
-          width: 320px; background: #1a1a1a;
-          border-left: 1px solid #2a2a2a;
-          display: flex; flex-direction: column;
-          flex-shrink: 0; overflow-y: auto;
-        }
+        .side-drawer { width: 320px; background: #1a1a1a; border-left: 1px solid #2a2a2a; display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto; }
         .side-drawer-header { padding: 16px; border-bottom: 1px solid #2a2a2a; }
         .side-drawer-header h3 { font-size: 16px; font-weight: 500; margin: 0; }
-        .bottom-dock {
-          display: flex; align-items: center; justify-content: center;
-          gap: 8px; padding: 12px 24px; background: #1a1a1a;
-          border-top: 1px solid #2a2a2a; flex-shrink: 0; height: 80px;
-        }
-        .dock-btn {
-          display: flex; flex-direction: column; align-items: center;
-          justify-content: center; gap: 4px; background: #2a2a2a;
-          color: #ddd; border: none; border-radius: 12px;
-          padding: 10px 18px; font-size: 11px; font-weight: 500;
-          cursor: pointer; transition: background 0.15s, color 0.15s; min-width: 64px;
-        }
+        .bottom-dock { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 24px; background: #1a1a1a; border-top: 1px solid #2a2a2a; flex-shrink: 0; height: 80px; }
+        .dock-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: #2a2a2a; color: #ddd; border: none; border-radius: 12px; padding: 10px 18px; font-size: 11px; font-weight: 500; cursor: pointer; transition: background 0.15s, color 0.15s; min-width: 64px; }
         .dock-btn:hover { background: #3a3a3a; color: #fff; }
         .dock-btn.active-off { background: #d93025; color: #fff; }
         .dock-btn.active-off:hover { background: #c5221f; }
